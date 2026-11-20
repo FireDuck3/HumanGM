@@ -1,0 +1,4 @@
+# Runtime dependencies of the official CSSLab Maia-3 inference code.
+torch>=2.15
+numpy
+huggingface-hub>=0.23

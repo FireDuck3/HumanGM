@@ -1,0 +1,14 @@
+{
+  "maia_weight": 0.16,
+  "style_weight": 12.0,
+  "safety_cp": 115.0,
+  "low_rating_temperature_cp": 35.0,
+  "high_rating_temperature_cp": 2.0,
+  "styles": {
+    "Aggressive": {"check": 0.55, "capture": 0.18, "center": 0.08, "risk": 0.16},
+    "Positional": {"check": 0.02, "capture": 0.06, "center": 0.28, "risk": -0.12},
+    "Universal": {"check": 0.16, "capture": 0.12, "center": 0.18, "risk": -0.02},
+    "Solid": {"check": -0.02, "capture": 0.05, "center": 0.12, "risk": -0.32},
+    "Dynamic": {"check": 0.24, "capture": 0.14, "center": 0.12, "risk": -0.08, "development": 0.24, "king_pressure": 0.28}
+  }
+}
