@@ -69,7 +69,8 @@ async function requestAnalysis(position: Position, rating: number, signal: Abort
     throw new Error(typeof payload?.detail === 'string' ? payload.detail
       : 'Аналіз наразі недоступний. Спробуй ще раз.');
   }
-  if (!payload?.recommended || !Array.isArray(payload.candidates)) {
+  if (!payload?.recommended || !Array.isArray(payload.candidates)
+    || typeof payload.fen !== 'string' || typeof payload.maia !== 'string') {
     throw new Error('Сервер не повернув результат аналізу.');
   }
   return payload as Analysis;
