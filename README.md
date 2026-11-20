@@ -4,6 +4,10 @@ HumanGM gives a written recommendation for a chess position. Set up the board by
 
 Stockfish searches up to six legal moves at full strength. Maia-3 evaluates the likelihood of all legal moves for its rating input. HumanGM recommends the highest Maia probability among moves within the Stockfish evaluation limit. The margin is 20 centipawns at the default target of 2800. Forced mates or a missing Maia policy use Stockfish's top move. A rating input describes the model's target, and an actual playing Elo would require match calibration.
 
+## Automatic practice
+
+Open **Автогра** on HumanGM. Choose a side for HumanGM and play the other side by hand, or watch HumanGM play White against Stockfish as Black. Starting the duel plays up to 20 half-moves before pausing. Stop at any time or change the position to pause the bot. The practice mode reads and changes the HumanGM board in its own browser tab.
+
 ## Windows
 
 This local installation already includes the engines. Double-click `scripts\run.cmd`, then open <http://127.0.0.1:8006>. A separate fresh source checkout needs Python, Node.js, the vendored Maia runtime, and a compatible Stockfish binary before the analysis API can run. Refer to `.env.example` for their paths.
@@ -28,7 +32,7 @@ Use the included Dockerfile and `render.yaml` to create a Docker Web Service fro
 
 The free service can sleep when idle. CPU inference latency and memory use on the Render instance should be verified after deployment. [Render Free limitations](https://render.com/docs/free)
 
-The analysis API accepts `POST /api/analyze` with `initial_fen` (optional), `moves` (UCI strings), and `target_rating` (1200–3000). It returns the same position, a recommended move, and the Stockfish/Maia candidate table. Each request carries its own position.
+The analysis API accepts `POST /api/analyze` with `initial_fen` (optional), `moves` (UCI strings), `target_rating` (1200–3000), and the optional `use_maia` switch (true by default). It returns the same position, a recommended move, and the candidate table. Each request carries its own position.
 
 ## Engine source
 

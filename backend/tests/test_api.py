@@ -16,9 +16,10 @@ def candidate(uci, cp, probability=None, mate=None):
 
 
 def test_analysis_picks_most_human_safe_move_without_playing_it(monkeypatch):
-    def analyze(board, rating):
+    def analyze(board, rating, *, use_maia):
         assert board.fen() == chess.STARTING_FEN
         assert rating == 2800
+        assert use_maia is True
         return AnalysisPool([
             candidate("e2e4", 30, .06),
             candidate("d2d4", 20, .33),
@@ -40,7 +41,7 @@ def test_analysis_picks_most_human_safe_move_without_playing_it(monkeypatch):
 def test_analysis_replays_legal_history_and_preserves_mate(monkeypatch):
     start = "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1"
 
-    def analyze(board, _rating):
+    def analyze(board, _rating, *, use_maia):
         assert board.fen() == start
         return AnalysisPool([
             candidate("e1e8", 99999, .01, mate=1),
@@ -64,7 +65,7 @@ def test_analysis_rejects_invalid_position(payload):
 
 
 def test_analysis_without_maia_recommends_stockfish(monkeypatch):
-    monkeypatch.setattr(engine, "analyze", lambda board, rating: AnalysisPool(
+    monkeypatch.setattr(engine, "analyze", lambda board, rating, **options: AnalysisPool(
         [candidate("e7e5", 40), candidate("c7c5", 32)], "connected", "offline",
     ))
     result = client.post("/api/analyze", json={"moves": ["e2e4"]}).json()
@@ -74,3 +75,15 @@ def test_analysis_without_maia_recommends_stockfish(monkeypatch):
     assert result["recommended"]["san"] == "e5"
     assert result["recommended"]["maia_probability"] is None
     assert result["selection"] == "stockfish"
+
+
+def test_stockfish_only_analysis_for_practice(monkeypatch):
+    def analyze(board, rating, *, use_maia):
+        assert use_maia is False
+        return AnalysisPool([candidate("e2e4", 30)], "connected", "skipped")
+
+    monkeypatch.setattr(engine, "analyze", analyze)
+    result = client.post("/api/analyze", json={"use_maia": False}).json()
+    assert result["recommended"]["uci"] == "e2e4"
+    assert result["selection"] == "stockfish"
+    assert result["maia"] == "skipped"

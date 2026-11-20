@@ -18,7 +18,7 @@ body {
   background: radial-gradient(ellipse at 20% 0%, #24332c 0, #131b1b 46%);
 }
 button, select, textarea { font: inherit; }
-button:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
+button:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
@@ -43,8 +43,18 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, summary:focu
   font: 1.65rem "Segoe UI Symbol", serif;
 }
 .brand-secondary { color: var(--muted); font-weight: 500; }
-.engine-label { font-size: .85rem; color: var(--muted); margin: 0; white-space: nowrap; }
-.engine-label span { color: var(--accent); padding: 0 .1em; }
+.mode-switch { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .3rem; }
+.mode-switch a {
+  padding: .35rem .48rem;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: .4rem;
+  text-decoration: none;
+  font-size: .84rem;
+  white-space: nowrap;
+}
+.mode-switch a:hover { color: var(--accent); }
+.mode-switch a[aria-current="page"] { background: #26392a; border-color: #516747; color: var(--accent); }
 .intro { padding: 2rem 0 1.55rem; }
 .intro h1 { margin: 0 0 .45rem; font-size: clamp(1.9rem, 4.8vw, 3.1rem); line-height: 1.04; letter-spacing: -.04em; }
 .intro p { margin: 0; color: var(--muted); line-height: 1.55; }
@@ -70,6 +80,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, summary:focu
 }
 .square.light { background: #dce0c9; color: #4b5f51; }
 .square.dark { background: #78917f; color: #f0f2df; }
+.square:disabled { cursor: wait; }
 .square.last.light { background: #dbe39f; }
 .square.last.dark { background: #a8ba72; }
 .square.selected.light, .square.selected.dark { background: #cbe681; color: #4b5f51; }
@@ -115,6 +126,10 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, summary:focu
 .controls .primary { margin-top: .85rem; }
 .rating-row { display: flex; align-items: center; justify-content: space-between; gap: .6rem; font-size: .94rem; }
 .rating-row label { font-weight: 650; }
+.practice-match { display: grid; gap: .45rem; margin-bottom: .95rem; }
+.practice-match label { font-size: .94rem; font-weight: 650; }
+.practice-feedback > p:first-child { color: #e3eee3; }
+.controls .practice-warning { color: #e1cbaa; font-size: .86rem; }
 select, textarea {
   min-width: 0;
   color: #ebf1eb;
@@ -172,6 +187,6 @@ summary { color: #e3ede3; cursor: pointer; font-weight: 650; font-size: .9rem; }
   .board-tools { margin-bottom: .4rem; }
 }
 @media (max-width: 350px) {
-  .engine-label { display: none; }
+  .brand-secondary { display: none; }
   .board-tools .button { font-size: .75rem; }
 }

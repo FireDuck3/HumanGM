@@ -24,9 +24,12 @@ type Analysis = {
   selection: 'hybrid' | 'stockfish';
   max_loss_cp: number;
 };
+type PracticeMatch = 'white' | 'black' | 'duel';
 
 const START: Position = { initialFen: DEFAULT_POSITION, moves: [] };
 const RATINGS = [1200, 1500, 1800, 2000, 2200, 2400, 2600, 2800, 3000];
+const PRACTICE_INTERVAL_MS = 900;
+const DUEL_LIMIT = 20;
 const GLYPHS: Record<Color, Record<PieceSymbol, string>> = {
   w: { k: '♔', q: '♕', r: '♖', b: '♗', n: '♘', p: '♙' },
   b: { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' },
@@ -50,6 +53,26 @@ function parsePosition(text: string, format: 'FEN' | 'PGN'): Position {
   const history = game.history({ verbose: true });
   if (!history.length && !game.getHeaders().FEN) throw new Error('PGN без ходів або позиції.');
   return { initialFen: history[0]?.before ?? game.fen(), moves: history.map(move => move.lan) };
+}
+
+async function requestAnalysis(position: Position, rating: number, signal: AbortSignal, useMaia = true): Promise<Analysis> {
+  const response = await fetch('/api/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      initial_fen: position.initialFen, moves: position.moves, target_rating: rating, use_maia: useMaia,
+    }),
+    signal,
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(typeof payload?.detail === 'string' ? payload.detail
+      : 'Аналіз наразі недоступний. Спробуй ще раз.');
+  }
+  if (!payload?.recommended || !Array.isArray(payload.candidates)) {
+    throw new Error('Сервер не повернув результат аналізу.');
+  }
+  return payload as Analysis;
 }
 
 function evaluation(move: Candidate) {
@@ -139,7 +162,7 @@ function Results({ result, pending, onCopy }: {
   </>;
 }
 
-function App() {
+function App({ practice }: { practice: boolean }) {
   const [position, setPosition] = React.useState<Position>(START);
   const [selected, setSelected] = React.useState<Square | null>(null);
   const [promotion, setPromotion] = React.useState<Move[]>([]);
@@ -152,15 +175,101 @@ function App() {
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
   const request = React.useRef<AbortController | null>(null);
+  const latestPosition = React.useRef(position);
+  const practiceRequest = React.useRef<AbortController | null>(null);
+  const lastPracticeRequestTime = React.useRef(-Infinity);
+  const [match, setMatch] = React.useState<PracticeMatch>('white');
+  const [running, setRunning] = React.useState(false);
+  const [duelPlies, setDuelPlies] = React.useState(0);
+  const [practiceMessage, setPracticeMessage] = React.useState('');
+  const [practiceError, setPracticeError] = React.useState('');
+  const [practiceFallback, setPracticeFallback] = React.useState(false);
   const game = React.useMemo(() => restore(position), [position]);
   const history = React.useMemo(() => game.history({ verbose: true }), [game]);
   const last = history[history.length - 1];
   const gameOver = game.isGameOver();
+  const autoTurn = practice && running && (match === 'duel' || game.turn() === (match === 'white' ? 'w' : 'b'));
+  const stockfishTurn = match === 'duel' && game.turn() === 'b';
   const legal = selected && !gameOver ? game.moves({ square: selected, verbose: true }) : [];
   const files = flipped ? 'hgfedcba' : 'abcdefgh';
   const ranks = flipped ? '12345678' : '87654321';
 
   React.useEffect(() => () => request.current?.abort(), []);
+
+  React.useEffect(() => {
+    if (!autoTurn || gameOver) return;
+    const controller = new AbortController();
+    const requestedFen = game.fen();
+    practiceRequest.current = controller;
+    const delay = Math.max(0, PRACTICE_INTERVAL_MS - (performance.now() - lastPracticeRequestTime.current));
+    const timer = window.setTimeout(async () => {
+      lastPracticeRequestTime.current = performance.now();
+      try {
+        const analysis = await requestAnalysis(position, rating, controller.signal, !stockfishTurn);
+        if (controller.signal.aborted || practiceRequest.current !== controller || latestPosition.current !== position) return;
+        if (new Chess(analysis.fen).fen() !== requestedFen) {
+          throw new Error('Рушій повернув результат для іншої позиції.');
+        }
+        const candidate = stockfishTurn
+          ? analysis.candidates.find(move => move.stockfish_rank === 1)
+          : analysis.recommended;
+        const legalMoves = game.moves({ verbose: true }).filter(move => move.lan === candidate?.uci);
+        if (legalMoves.length !== 1) throw new Error('Рушій повернув хід, який не можна зробити у цій позиції.');
+
+        const move = legalMoves[0];
+        const next = { initialFen: position.initialFen, moves: [...position.moves, move.lan] };
+        const nextGame = restore(next);
+        changePosition(next, true);
+        if (!stockfishTurn) setPracticeFallback(analysis.selection === 'stockfish' && !analysis.maia.startsWith('connected'));
+        setPracticeMessage(`${stockfishTurn ? 'Stockfish' : 'HumanGM'} зіграв ${move.san}.`);
+        if (match === 'duel') {
+          const played = duelPlies + 1;
+          setDuelPlies(played);
+          if (played >= DUEL_LIMIT) {
+            setRunning(false);
+            setPracticeMessage(`Зіграно ${DUEL_LIMIT} півходів. Натисни «Запустити», щоб продовжити.`);
+          }
+        }
+        if (nextGame.isGameOver()) {
+          setRunning(false);
+          setPracticeMessage(`Партію завершено. ${moveStatus(nextGame)}.`);
+        }
+      } catch (failure) {
+        if (controller.signal.aborted || practiceRequest.current !== controller) return;
+        setRunning(false);
+        setPracticeMessage('Автогру призупинено.');
+        setPracticeError(failure instanceof Error ? failure.message : 'Не вдалося підключитися.');
+      }
+    }, delay);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+      if (practiceRequest.current === controller) practiceRequest.current = null;
+    };
+  }, [autoTurn, gameOver, game, position, rating, stockfishTurn, match, duelPlies]);
+
+  function cancelPracticeRequest() {
+    practiceRequest.current?.abort();
+    practiceRequest.current = null;
+  }
+
+  function stopPractice(message = 'Автогру зупинено.') {
+    cancelPracticeRequest();
+    setRunning(false);
+    setPracticeError('');
+    setPracticeMessage(message);
+    setPracticeFallback(false);
+  }
+
+  function startPractice() {
+    if (running || gameOver || promotion.length) return;
+    setSelected(null);
+    setPracticeMessage('');
+    setPracticeError('');
+    setPracticeFallback(false);
+    setDuelPlies(0);
+    setRunning(true);
+  }
 
   function invalidateAnalysis() {
     request.current?.abort();
@@ -171,19 +280,28 @@ function App() {
     setNotice('');
   }
 
-  function changePosition(next: Position) {
+  function changePosition(next: Position, continuePractice = false) {
+    if (practice) {
+      if (continuePractice) cancelPracticeRequest();
+      else stopPractice(running ? 'Позиція змінилася. Запусти автогру знову.' : '');
+    }
     invalidateAnalysis();
+    latestPosition.current = next;
     setSelected(null);
     setPromotion([]);
     setPosition(next);
   }
 
   function record(move: Move) {
-    changePosition({ initialFen: position.initialFen, moves: [...position.moves, move.lan] });
+    if (autoTurn || latestPosition.current !== position) return;
+    const next = { initialFen: position.initialFen, moves: [...position.moves, move.lan] };
+    const nextGame = practice && running ? restore(next) : null;
+    changePosition(next, true);
+    if (nextGame?.isGameOver()) stopPractice(`Партію завершено. ${moveStatus(nextGame)}.`);
   }
 
   function choose(square: Square) {
-    if (gameOver || promotion.length) return;
+    if (gameOver || promotion.length || autoTurn) return;
     const matching = legal.filter(move => move.to === square);
     if (matching.length > 1) setPromotion(matching);
     else if (matching.length) record(matching[0]);
@@ -218,21 +336,8 @@ function App() {
     setNotice('');
     setPending(true);
     try {
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initial_fen: position.initialFen, moves: position.moves, target_rating: rating }),
-        signal: controller.signal,
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(typeof payload?.detail === 'string' ? payload.detail
-          : 'Аналіз наразі недоступний. Спробуй ще раз.');
-      }
-      if (!payload?.recommended || !Array.isArray(payload.candidates)) {
-        throw new Error('Сервер не повернув результат аналізу.');
-      }
-      if (!controller.signal.aborted) setResult(payload as Analysis);
+      const payload = await requestAnalysis(position, rating, controller.signal);
+      if (!controller.signal.aborted) setResult(payload);
     } catch (failure) {
       if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Не вдалося підключитися.');
     } finally {
@@ -248,11 +353,15 @@ function App() {
     <header className="site-header">
       <div className="brand"><span className="mark" aria-hidden="true">♞</span>
         <span>HumanGM <span className="brand-secondary">Chess Lab</span></span></div>
-      <p className="engine-label">Stockfish <span>+</span> Maia‑3</p>
+      <nav className="mode-switch" aria-label="Режим шахів">
+        <a href="/" aria-current={!practice ? 'page' : undefined}>Аналіз</a>
+        <a href="/?mode=practice" aria-current={practice ? 'page' : undefined}>Автогра</a>
+      </nav>
     </header>
     <div className="intro">
-      <h1>Аналіз шахової позиції</h1>
-      <p>Зістав сильні ходи Stockfish із вибором, який зробила б людина.</p>
+      <h1>{practice ? 'Тренувальна автогра' : 'Аналіз шахової позиції'}</h1>
+      <p>{practice ? 'Доручи HumanGM одну сторону або запусти матч проти Stockfish на цій дошці.'
+        : 'Зістав сильні ходи Stockfish із вибором, який зробила б людина.'}</p>
     </div>
 
     <div className="workbench">
@@ -272,7 +381,7 @@ function App() {
               if (suggested.slice(0, 2) === square || suggested.slice(2, 4) === square) classes.push('recommended');
               if (selected === square) classes.push('selected');
               if (legal.some(move => move.to === square)) classes.push(piece ? 'can-capture' : 'can-move');
-              return <button type="button" className={classes.join(' ')} key={square} onClick={() => choose(square)}
+              return <button type="button" className={classes.join(' ')} key={square} onClick={() => choose(square)} disabled={autoTurn}
                 aria-label={label} aria-pressed={selected === square}>
                 {piece && <span aria-hidden="true" className={`piece piece-${piece.color}`}>{GLYPHS[piece.color][piece.type]}</span>}
                 {x === 0 && <span aria-hidden="true" className="coord rank">{rank}</span>}
@@ -312,24 +421,51 @@ function App() {
         </details>}
         {notice && <p className="inline-status" role="status">{notice}</p>}
       </section>
-      <aside className="analysis-panel" aria-label="Аналіз рушіїв">
+      <aside className="analysis-panel" aria-label={practice ? 'Керування автогрою' : 'Аналіз рушіїв'}>
         <section className="panel controls">
+          {practice && <div className="practice-match">
+            <label htmlFor="practice-match">Хто робить ходи</label>
+            <select id="practice-match" value={match} onChange={event => {
+              stopPractice(running ? 'Режим змінився. Запусти автогру знову.' : '');
+              setMatch(event.target.value as PracticeMatch);
+              setDuelPlies(0);
+              setSelected(null);
+              setPromotion([]);
+            }}>
+              <option value="white">HumanGM за білих</option>
+              <option value="black">HumanGM за чорних</option>
+              <option value="duel">HumanGM проти Stockfish</option>
+            </select>
+          </div>}
           <div className="rating-row"><label htmlFor="target-rating">Рейтинг для Maia‑3</label>
             <select id="target-rating" value={rating} onChange={event => {
               invalidateAnalysis();
+              if (practice) stopPractice(running ? 'Рейтинг змінився. Запусти автогру знову.' : '');
               setRating(Number(event.target.value));
             }}>{RATINGS.map(value => <option key={value} value={value}>{value} Elo</option>)}</select>
           </div>
-          <button type="button" className="button primary" disabled={pending || gameOver}
-            onClick={analyze}>{pending ? 'Аналізую…' : 'Знайти хід'}</button>
+          {practice ? <>
+            <button type="button" className="button primary" disabled={!running && (gameOver || !!promotion.length)}
+              onClick={() => running ? stopPractice() : startPractice()}>{running ? 'Зупинити' : 'Запустити'}</button>
+            <div className="practice-feedback" role="status" aria-live="polite">
+              <p>{running ? autoTurn ? `${stockfishTurn ? 'Stockfish' : 'HumanGM'} обирає хід…` : 'Твоя черга ходити.'
+                : practiceMessage || 'Вибери режим і запусти автогру.'}</p>
+              {running && practiceMessage && <p className="table-note">{practiceMessage}</p>}
+              {match === 'duel' && <p className="table-note">{duelPlies} / {DUEL_LIMIT} півходів за запуск. HumanGM грає білими.</p>}
+            </div>
+            {practiceFallback && <p className="practice-warning">На останньому ході HumanGM оцінка Maia‑3 була недоступна. Хід обрав Stockfish.</p>}
+            {practiceError && <p className="error" role="alert">{practiceError}</p>}
+          </> : <button type="button" className="button primary" disabled={pending || gameOver}
+            onClick={analyze}>{pending ? 'Аналізую…' : 'Знайти хід'}</button>}
           {gameOver && <p className="table-note">У цій позиції партію завершено.</p>}
           {error && <p className="error" role="alert">{error}</p>}
         </section>
-        <Results result={result} pending={pending} onCopy={copy} />
+        {!practice && <Results result={result} pending={pending} onCopy={copy} />}
       </aside>
     </div>
     <footer className="site-footer"><a href="/downloads/maia3-uci-source.tar.gz">Код Maia‑3</a></footer>
   </main>;
 }
 
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
+const practice = new URLSearchParams(window.location.search).get('mode') === 'practice';
+createRoot(document.getElementById('root')!).render(<React.StrictMode><App practice={practice} /></React.StrictMode>);

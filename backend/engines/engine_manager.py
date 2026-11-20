@@ -109,7 +109,7 @@ class EngineManager:
         for rank, candidate in enumerate(ranked, 1):
             candidate.maia_rank = rank
 
-    def analyze(self, board: chess.Board, target_rating: int) -> AnalysisPool:
+    def analyze(self, board: chess.Board, target_rating: int, *, use_maia: bool = True) -> AnalysisPool:
         legal = list(board.legal_moves)
         if not legal:
             raise ValueError("Game is over")
@@ -117,7 +117,7 @@ class EngineManager:
         candidates_by_move = {move: Candidate(move=move) for move in legal}
         stockfish_moves: list[chess.Move] = []
         stockfish_status = "offline"
-        maia_status = "offline"
+        maia_status = "offline" if use_maia else "skipped"
         multipv = min(max(1, int(os.getenv("ENGINE_CANDIDATES", "6"))), 6, len(legal))
         move_time = float(os.getenv("ENGINE_MOVE_TIME", "1.5"))
         if target_rating >= GM_TARGET_RATING:
@@ -153,7 +153,7 @@ class EngineManager:
                     stockfish_moves.clear()
                     stockfish_status = f"error: {type(exc).__name__}"
 
-            if stockfish_moves and self._available(self.maia_path):
+            if use_maia and stockfish_moves and self._available(self.maia_path):
                 try:
                     # The first isready may load the model weights and initialize PyTorch on CPU.
                     maia = self._engine("maia", [self.maia_path, *self.maia_args], float(os.getenv("MAIA_START_TIMEOUT", "50")))

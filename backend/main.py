@@ -40,6 +40,7 @@ class AnalysisRequest(BaseModel):
     initial_fen: str | None = Field(default=None, max_length=160)
     moves: list[str] = Field(default_factory=list, max_length=2048)
     target_rating: int = Field(default=GM_TARGET_RATING, ge=1200, le=3000)
+    use_maia: bool = True
 
 
 def replay_position(data: AnalysisRequest) -> chess.Board:
@@ -89,7 +90,7 @@ def analyze(data: AnalysisRequest):
     if not analysis_slot.acquire(blocking=False):
         raise HTTPException(429, "Рушії завершують інший аналіз. Спробуй ще раз за кілька секунд.")
     try:
-        result = engine.analyze(board, data.target_rating)
+        result = engine.analyze(board, data.target_rating, use_maia=data.use_maia)
     finally:
         analysis_slot.release()
     if not result.candidates:
